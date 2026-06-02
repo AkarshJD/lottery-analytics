@@ -1,0 +1,43 @@
+# Environment
+.env
+.venv/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# macOS
+.DS_Store
+
+# Data (never commit raw or processed data)
+data/raw/
+data/processed/
+
+# MLflow
+mlruns/
+mlartifacts/
+
+# Logs
+*.log
+logs/
+
+# Build
+*.egg-info/
+dist/
+build/
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+
+# IDE
+.vscode/
+.idea/
+
+# Study notes (personal)
+study/
+
+# Experiment outputs
+experiments/results/
