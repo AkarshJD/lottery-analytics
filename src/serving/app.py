@@ -20,6 +20,7 @@ import numpy as np
 import pandas as pd
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
+from fastapi.responses import RedirectResponse
 
 from src.features.claims import ANOMALY_FEATURE_COLUMNS
 from src.features.transforms import FEATURE_COLUMNS, GAME_CFG, build_features
@@ -81,6 +82,15 @@ app = FastAPI(
     version="1.0.0",
     lifespan=lifespan,
 )
+
+
+# ---------------------------------------------------------------------------
+# Root
+# ---------------------------------------------------------------------------
+
+@app.get("/", include_in_schema=False)
+def root():
+    return RedirectResponse(url="/docs")
 
 
 # ---------------------------------------------------------------------------
