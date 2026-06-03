@@ -55,7 +55,7 @@ pytest
 |---|---|---|
 | `calendar_date` | date | Transaction date |
 | `fiscal_year` | int | FY starts July 1 (Jul 2023 = FY2024) |
-| `fiscal_quarter` | int | Q1=Jan-Mar, Q2=Apr-Jun, Q3=Jul-Sep, Q4=Oct-Dec |
+| `fiscal_quarter` | int | Q1=Jul-Sep, Q2=Oct-Dec, Q3=Jan-Mar, Q4=Apr-Jun |
 | `fiscal_month` | int | 1=Jan … 12=Dec |
 | `fiscal_week` | int | ISO week number (1–53) |
 | `game_name` | str | Game identifier |
