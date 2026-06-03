@@ -6,7 +6,7 @@ End-to-end retail ticket sales analytics pipeline: time-series forecasting, play
 
 | Layer | Tools |
 |---|---|
-| Forecasting | Prophet + XGBoost ensemble |
+| Forecasting | XGBoost |
 | Segmentation | K-Means + DBSCAN |
 | Anomaly detection | Isolation Forest |
 | Experiment tracking | MLflow |
