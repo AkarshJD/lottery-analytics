@@ -24,10 +24,9 @@ pip install -r requirements.txt
 cp .env.example .env
 ```
 
-Generate data, train models, serve:
+Train models, serve:
 
 ```bash
-python src/data/generate.py
 python src/models/train.py --model forecasting
 python src/models/train.py --model segmentation
 python src/models/train.py --model anomaly
@@ -47,6 +46,9 @@ pytest
 ```
 
 ## Data schema
+
+> Data is not included in this repository. Place parquet files in `data/raw/` before training.
+
 
 ### daily_sales.parquet
 | Column | Type | Description |
@@ -100,12 +102,12 @@ lottery-analytics/
     data_config.yaml
     model_config.yaml
   src/
-    data/generate.py
+    data/
     features/
     models/
     serving/
   tests/
   experiments/
-  data/raw/          (gitignored)
-  data/processed/    (gitignored)
+  data/raw/          (not included)
+  data/processed/    (not included)
 ```
