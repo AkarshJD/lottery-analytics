@@ -41,3 +41,6 @@ study/
 
 # Experiment outputs
 experiments/results/
+
+# Synthetic data generation config (generator lives in study/)
+configs/data_config.yaml
