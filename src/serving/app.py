@@ -2,9 +2,10 @@
 FastAPI serving layer.
 
 Endpoints:
-  GET  /health   — model load status
-  POST /predict  — draw game sales forecast (XGBoost)
-  POST /score    — retailer anomaly score (Isolation Forest)
+  GET  /health    — model load status
+  POST /predict   — draw game sales forecast (XGBoost)
+  POST /score     — retailer anomaly score (Isolation Forest)
+  POST /allocate  — location-level inventory allocation (hierarchical forecast)
 
 Models are loaded from the MLflow registry at startup and cached in memory.
 """
@@ -23,15 +24,22 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import RedirectResponse
 
 from src.features.claims import ANOMALY_FEATURE_COLUMNS
+from src.features.locations import build_system_series, load_location_sales
 from src.features.transforms import FEATURE_COLUMNS, GAME_CFG, build_features
 from src.data.load import load_game
+from src.models.inventory import INV_CFG
+from src.models.location_forecast import LocationAllocator, SystemDemandForecaster, forecast_system_ahead
 from src.serving.schemas import (
+    AllocationRequest,
+    AllocationResponse,
     AnomalyResponse,
     ForecastPoint,
     ForecastRequest,
     ForecastResponse,
     HealthResponse,
+    LocationAllocationPoint,
     RetailerFeatures,
+    SystemForecastPoint,
 )
 
 load_dotenv()
@@ -45,7 +53,7 @@ _MODELS: dict = {}
 
 def _load_models() -> dict:
     mlflow.set_tracking_uri(MLFLOW_URI)
-    cache: dict = {"forecast": {}, "anomaly": None}
+    cache: dict = {"forecast": {}, "anomaly": None, "location": None}
 
     # Anomaly model
     try:
@@ -61,6 +69,18 @@ def _load_models() -> dict:
         except Exception as exc:
             print(f"  [warn] forecast model for '{game_name}' not loaded: {exc}")
 
+    # System-wide location demand model (hierarchical inventory allocation).
+    # MLflow stores the raw xgb.XGBRegressor; wrap it back in
+    # SystemDemandForecaster so callers get its predict()/evaluate() contract.
+    try:
+        raw_model = mlflow.xgboost.load_model("models:/location-system-forecast/latest")
+        forecaster = SystemDemandForecaster()
+        forecaster.model = raw_model
+        forecaster._fitted = True
+        cache["location"] = forecaster
+    except Exception as exc:
+        print(f"  [warn] location forecast model not loaded: {exc}")
+
     return cache
 
 
@@ -69,6 +89,7 @@ async def lifespan(app: FastAPI):
     print("loading models from MLflow registry...")
     _MODELS.update(_load_models())
     print(f"  anomaly model: {'✓' if _MODELS['anomaly'] else '✗'}")
+    print(f"  location model: {'✓' if _MODELS['location'] else '✗'}")
     for g in GAME_CFG:
         status = "✓" if g in _MODELS["forecast"] else "✗"
         print(f"  forecast [{g}]: {status}")
@@ -101,6 +122,7 @@ def root():
 def health():
     loaded = {
         "anomaly": _MODELS.get("anomaly") is not None,
+        "location": _MODELS.get("location") is not None,
         **{f"forecast_{g}": g in _MODELS.get("forecast", {}) for g in GAME_CFG},
     }
     return HealthResponse(status="ok", models_loaded=loaded)
@@ -195,4 +217,63 @@ def score(req: RetailerFeatures):
         anomaly_score=round(anomaly_score, 4),
         is_flagged=anomaly_score >= detector.threshold,
         threshold=float(detector.threshold),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Inventory allocation
+# ---------------------------------------------------------------------------
+
+@app.post("/allocate", response_model=AllocationResponse)
+def allocate(req: AllocationRequest):
+    forecaster = _MODELS.get("location")
+    if forecaster is None:
+        raise HTTPException(status_code=503, detail="Location forecast model is not loaded.")
+
+    data_path = ROOT / "data" / "raw" / "location_weekly_sales.parquet"
+    if not data_path.exists():
+        raise HTTPException(status_code=503, detail="Location sales history not available.")
+
+    loc_df = load_location_sales()
+    system = build_system_series(loc_df)
+
+    future = forecast_system_ahead(forecaster, system, horizon_weeks=req.horizon_weeks)
+    system_forecast_out = [
+        SystemForecastPoint(
+            fiscal_year=int(r.fiscal_year),
+            fiscal_week=int(r.fiscal_week),
+            predicted_system_sales=round(float(r.predicted_system_sales), 2),
+        )
+        for r in future.itertuples()
+    ]
+
+    # Allocate the LAST forecast week in the horizon down to locations using
+    # the most recent trailing share estimate — this is the week the caller
+    # actually wants an inventory par level for.
+    allocator = LocationAllocator()
+    shares = allocator.latest_shares(loc_df)
+    target = future.iloc[[-1]][["predicted_system_sales"]]
+
+    allocation = shares.copy()
+    allocation["predicted_sales"] = allocation["share"] * float(target["predicted_system_sales"].iloc[0])
+
+    safety_factor = INV_CFG["safety_factor"]
+    allocation["par_level"] = allocation["predicted_sales"] * safety_factor
+    allocation = allocation.sort_values("par_level", ascending=False).head(req.top_n)
+
+    allocations_out = [
+        LocationAllocationPoint(
+            location_id=row.location_id,
+            share=round(float(row.share), 6),
+            predicted_sales=round(float(row.predicted_sales), 2),
+            par_level=round(float(row.par_level), 2),
+        )
+        for row in allocation.itertuples()
+    ]
+
+    return AllocationResponse(
+        horizon_weeks=req.horizon_weeks,
+        safety_factor=safety_factor,
+        system_forecast=system_forecast_out,
+        allocations=allocations_out,
     )
