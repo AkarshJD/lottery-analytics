@@ -19,7 +19,7 @@ from src.serving.app import app
 
 @pytest.fixture
 def mock_models(monkeypatch):
-    """Patch _MODELS with mock detector and forecast model."""
+    """Patch _MODELS with mock detector, forecast, and location models."""
     mock_anomaly = MagicMock()
     mock_anomaly.scaler.transform.return_value = np.zeros((1, 15))
     mock_anomaly.model.decision_function.return_value = np.array([0.05])
@@ -28,9 +28,13 @@ def mock_models(monkeypatch):
     mock_xgb = MagicMock()
     mock_xgb.predict.return_value = np.full(7, 120_000.0)
 
+    mock_location = MagicMock()
+    mock_location.predict.return_value = np.array([1_000_000.0])
+
     monkeypatch.setattr(serving_module, "_load_models", lambda: {
         "anomaly": mock_anomaly,
         "forecast": {"Powerball": mock_xgb},
+        "location": mock_location,
     })
 
 
@@ -140,3 +144,42 @@ def test_score_invalid_ratio_returns_422(client):
     bad = {**VALID_RETAILER, "off_hours_ratio": 5.0}  # ratio > 1 is invalid
     response = client.post("/score", json=bad)
     assert response.status_code == 422
+
+
+# ---------------------------------------------------------------------------
+# Allocate
+# ---------------------------------------------------------------------------
+
+def test_allocate_valid_input_returns_200(client):
+    response = client.post("/allocate", json={"horizon_weeks": 2, "top_n": 5})
+    assert response.status_code == 200
+
+
+def test_allocate_returns_requested_horizon(client):
+    data = client.post("/allocate", json={"horizon_weeks": 3, "top_n": 5}).json()
+    assert data["horizon_weeks"] == 3
+    assert len(data["system_forecast"]) == 3
+
+
+def test_allocate_respects_top_n(client):
+    data = client.post("/allocate", json={"horizon_weeks": 1, "top_n": 5}).json()
+    assert len(data["allocations"]) == 5
+
+
+def test_allocate_shares_sum_near_one_across_full_allocation(client):
+    """With top_n covering every location, shares must sum to ~1."""
+    data = client.post("/allocate", json={"horizon_weeks": 1, "top_n": 3000}).json()
+    total_share = sum(a["share"] for a in data["allocations"])
+    assert total_share == pytest.approx(1.0, abs=1e-3)
+
+
+def test_allocate_invalid_horizon_returns_422(client):
+    response = client.post("/allocate", json={"horizon_weeks": 0, "top_n": 5})
+    assert response.status_code == 422
+
+
+def test_allocate_model_not_loaded_returns_503(client, monkeypatch):
+    import src.serving.app as app_module
+    monkeypatch.setitem(app_module._MODELS, "location", None)
+    response = client.post("/allocate", json={"horizon_weeks": 1, "top_n": 5})
+    assert response.status_code == 503

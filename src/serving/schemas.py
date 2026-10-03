@@ -72,3 +72,32 @@ class AnomalyResponse(BaseModel):
     anomaly_score: float = Field(..., ge=0.0, le=1.0, description="0 = normal, 1 = most anomalous")
     is_flagged: bool
     threshold: float
+
+
+# ---------------------------------------------------------------------------
+# Inventory allocation
+# ---------------------------------------------------------------------------
+
+class AllocationRequest(BaseModel):
+    horizon_weeks: int = Field(1, ge=1, le=8, description="Number of weeks ahead to allocate")
+    top_n: int = Field(20, ge=1, le=3000, description="Number of locations to return, ranked by par level")
+
+
+class SystemForecastPoint(BaseModel):
+    fiscal_year: int
+    fiscal_week: int
+    predicted_system_sales: float
+
+
+class LocationAllocationPoint(BaseModel):
+    location_id: str
+    share: float
+    predicted_sales: float
+    par_level: float
+
+
+class AllocationResponse(BaseModel):
+    horizon_weeks: int
+    safety_factor: float
+    system_forecast: list[SystemForecastPoint]
+    allocations: list[LocationAllocationPoint]

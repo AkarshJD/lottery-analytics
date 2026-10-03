@@ -9,6 +9,7 @@ Usage:
     python src/models/train.py --model forecasting
     python src/models/train.py --model segmentation
     python src/models/train.py --model anomaly
+    python src/models/train.py --model location
 """
 
 import argparse
@@ -237,11 +238,74 @@ def train_anomaly():
         )
 
 
+def train_location_forecast():
+    """
+    Trains the system-wide weekly demand forecaster — the top level of the
+    hierarchical location forecast. Location allocation itself (rolling
+    share) isn't a fitted artifact, so it isn't registered here; it's
+    recomputed from recent data at allocation time. See experiments/
+    inventory_allocation_backtest.py for the business-metric evaluation
+    (stock-out reduction) this model enables.
+    """
+    from src.features.locations import (
+        LOC_CFG,
+        SYSTEM_FEATURE_COLUMNS,
+        build_system_features,
+        build_system_series,
+        load_location_sales,
+    )
+    from src.models.location_forecast import SystemDemandForecaster
+
+    print("loading location-level weekly sales...")
+    loc_df = load_location_sales()
+    system = build_system_series(loc_df)
+    feat = build_system_features(system)
+
+    test_weeks = LOC_CFG["cv"]["test_weeks"]
+    cutoff = int(feat["week_index"].max()) - test_weeks
+    train_feat = feat[feat["week_index"] <= cutoff]
+    test_feat = feat[feat["week_index"] > cutoff]
+
+    print(f"  {len(loc_df):,} location-weeks across {loc_df['location_id'].nunique():,} locations")
+    print(f"  {len(train_feat)} train weeks, {len(test_feat)} test weeks")
+
+    mlflow.set_experiment("location-forecasting")
+
+    with mlflow.start_run(run_name="system-demand-xgboost"):
+        mlflow.log_param("model", "xgboost_direct")
+        mlflow.log_param("grain", "system_weekly_total")
+        mlflow.log_param("n_locations", loc_df["location_id"].nunique())
+        mlflow.log_param("train_weeks", len(train_feat))
+        mlflow.log_param("test_weeks", len(test_feat))
+
+        forecaster = SystemDemandForecaster()
+        forecaster.fit(train_feat)
+
+        train_metrics = forecaster.evaluate(train_feat)
+        test_metrics = forecaster.evaluate(test_feat)
+        mlflow.log_metrics({
+            "train_mape": train_metrics["mape"],
+            "test_mape": test_metrics["mape"],
+            "train_mae": train_metrics["mae"],
+            "test_mae": test_metrics["mae"],
+        })
+
+        print(f"  train MAPE: {train_metrics['mape']:.2%}  |  test MAPE: {test_metrics['mape']:.2%}")
+
+        mlflow.xgboost.log_model(
+            forecaster.model,
+            artifact_path="xgb_model",
+            registered_model_name="location-system-forecast",
+            model_format="json",
+            input_example=train_feat[SYSTEM_FEATURE_COLUMNS].head(5),
+        )
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--model",
-        choices=["forecasting", "segmentation", "anomaly"],
+        choices=["forecasting", "segmentation", "anomaly", "location"],
         required=True,
     )
     args = parser.parse_args()
@@ -252,6 +316,8 @@ def main():
         train_segmentation()
     elif args.model == "anomaly":
         train_anomaly()
+    elif args.model == "location":
+        train_location_forecast()
 
 
 if __name__ == "__main__":

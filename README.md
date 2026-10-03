@@ -1,12 +1,13 @@
 # lottery-analytics
 
-End-to-end retail ticket sales analytics pipeline: time-series forecasting, player segmentation, and anomaly detection on retailer claim patterns.
+End-to-end retail ticket sales analytics pipeline: time-series forecasting, location-level inventory allocation, player segmentation, and anomaly detection on retailer claim patterns.
 
 ## Stack
 
 | Layer | Tools |
 |---|---|
 | Forecasting | XGBoost |
+| Inventory allocation | XGBoost (system-wide) + rolling-share hierarchical disaggregation across 3,000 locations |
 | Segmentation | K-Means + DBSCAN |
 | Anomaly detection | Isolation Forest |
 | Experiment tracking | MLflow |
@@ -27,9 +28,10 @@ cp .env.example .env
 Train models, serve:
 
 ```bash
-python src/models/train.py --model forecasting
-python src/models/train.py --model segmentation
-python src/models/train.py --model anomaly
+python -m src.models.train --model forecasting
+python -m src.models.train --model segmentation
+python -m src.models.train --model anomaly
+python -m src.models.train --model location
 uvicorn src.serving.app:app --reload
 ```
 
@@ -39,11 +41,37 @@ MLflow UI:
 mlflow ui --backend-store-uri sqlite:///mlruns/mlflow.db
 ```
 
+Inventory allocation backtest (ML vs. naive policy, equal inventory budget):
+
+```bash
+python experiments/inventory_allocation_backtest.py
+```
+
 Tests:
 
 ```bash
 pytest
 ```
+
+## Inventory allocation
+
+`location_weekly_sales.parquet` covers 3,000 retail locations at weekly
+grain — too short and noisy a history to forecast independently per
+location. Instead this uses a top-down hierarchical approach:
+
+1. **`SystemDemandForecaster`** (XGBoost) forecasts total weekly ticket
+   sales across all locations.
+2. **`LocationAllocator`** disaggregates that total down to each location
+   using its trailing rolling share of system sales (shares are close to
+   stationary by construction, so this is a low-variance estimator).
+
+`experiments/inventory_allocation_backtest.py` evaluates the resulting
+par-level policy against the naive pre-ML baseline (each location's own
+trailing rolling-mean sales) on 52 held-out weeks, with both policies
+allocating the **same total inventory budget** — isolating the comparison
+to allocation accuracy rather than "more stock everywhere." Measured
+result: **36% relative reduction in location-week stock-outs** (20.8% →
+13.3%) at a 5.75% system-level forecast MAPE.
 
 ## Data schema
 
@@ -103,11 +131,11 @@ lottery-analytics/
     model_config.yaml
   src/
     data/
-    features/
-    models/
+    features/        (incl. locations.py — system series + rolling share)
+    models/           (incl. location_forecast.py, inventory.py)
     serving/
   tests/
-  experiments/
+  experiments/        (model comparison + inventory_allocation_backtest.py)
   data/raw/          (not included)
   data/processed/    (not included)
 ```

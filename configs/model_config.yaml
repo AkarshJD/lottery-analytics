@@ -78,3 +78,29 @@ anomaly_detection:
     bootstrap: false
 
   flag_threshold: 0.6        # anomaly score above this gets flagged
+
+location_forecasting:
+  # Top-down hierarchical forecast: XGBoost predicts system-wide weekly
+  # sales; location shares (close to stationary by construction) allocate
+  # the total down to each of the 3,000 locations.
+  xgboost:
+    n_estimators: 300
+    max_depth: 5
+    learning_rate: 0.05
+    subsample: 0.8
+    colsample_bytree: 0.8
+    min_child_weight: 5
+    objective: reg:squarederror
+    random_state: 42
+
+  share_window: 13           # trailing weeks used to estimate a location's share of system sales
+
+  cv:
+    test_weeks: 52            # holdout weeks for model evaluation and the allocation backtest
+
+inventory_policy:
+  naive_window: 13            # trailing weeks for the pre-ML per-location rolling-mean baseline
+  budget_multiplier: 1.10     # total inventory budget = 110% of actual test-period demand,
+                               # held EQUAL across both policies so any stock-out improvement
+                               # comes from allocation accuracy, not from carrying more stock
+  safety_factor: 1.10         # default par-level safety margin used outside the backtest (serving)
